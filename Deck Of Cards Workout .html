@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="ru">
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deck of Cards Workout: without Cards</title>
+<style>
+  :root {
+    --bg: #f5f6f4; --fg: #1c211e; --muted: #5d665f; --line: #cdd3ce;
+    --field: #ffffff; --accent: #1f6f50; --accent-fg: #ffffff; --danger: #b3261e;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #151a17; --fg: #e6ebe7; --muted: #9aa59d; --line: #323b35;
+      --field: #1d2420; --accent: #4fb98a; --accent-fg: #0e1411; --danger: #f2877f;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 24px 16px 0;
+  }
+  main { width: 100%; max-width: 760px; flex: 1; display: flex; flex-direction: column; }
+
+  .count-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 14px; margin-bottom: 14px; }
+  .count-row label.radio { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+  .count-row input[type=radio] { accent-color: var(--accent); }
+
+  #groups { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px 12px; }
+  @media (max-width: 640px) { #groups { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 420px) { #groups { grid-template-columns: 1fr; } }
+  .group { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+  .group[hidden] { display: none; }
+  .group h2 { margin: 0 0 6px; font-size: 14px; text-align: center; }
+  .group label { display: block; font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .group input {
+    width: 100%; font: inherit; font-size: 14px; padding: 4px 6px;
+    background: var(--field); color: var(--fg); border: 1px solid var(--line); border-radius: 4px;
+  }
+
+  button {
+    font: inherit; cursor: pointer; border-radius: 6px; padding: 12px 16px;
+    border: 1px solid var(--line); background: var(--field); color: var(--fg);
+  }
+  button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #generate { width: 100%; margin: 14px 0 6px; }
+
+  .out { text-align: center; margin: 2px 0; overflow-wrap: anywhere; }
+  #result { font-size: 18px; color: var(--danger); min-height: 1.4em; }
+  #round { font-size: 50px; font-weight: 700; min-height: 1.4em; }
+  #counter { font-size: 40px; font-weight: 700; min-height: 1.4em; }
+  .timers { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 14px 0; text-align: center; font-size: 50px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  #shown, #sums { font-size: 30px; min-height: 1.4em; }
+
+  .bar {
+    position: sticky; bottom: 0; margin-top: auto; padding: 14px 0 calc(14px + env(safe-area-inset-bottom, 0px));
+    background: var(--bg); display: flex; gap: 10px;
+  }
+  .bar button { flex: 1; }
+  .bar [hidden] { display: none; }
+</style>
+</head>
+<body>
+<main>
+
+
+
+  <button id="generate" type="button">Generate workout</button>
+
+  <div class="out" id="result"></div>
+  <div class="out" id="round"></div>
+  <div class="out" id="counter"></div>
+
+  <div class="timers">
+    <div id="timer">All time: 00:00</div>
+    <div id="roundTimer">Round time: 00:00</div>
+  </div>
+
+  <div class="out" id="shown"></div>
+  <div class="out" id="sums"></div>
+
+  <div class="bar">
+    <button id="start" class="primary" type="button">Start workout</button>
+    <button id="next" type="button" hidden>Next round</button>
+    <button id="stop" type="button" hidden>Stop workout</button>
+  </div>
+  
+  <div class="count-row">
+    <span>Excersize count</span>
+    <span id="radios" style="display:contents"></span>
+  </div>
+  
+  <div id="groups"></div>
+  
+</main>
+
+<script>
+"use strict";
+
+const MAX_EXERCISES = 6;
+const STORAGE_KEY = "workout-params";
+
+// [ключ, подпись, значение по умолчанию, числовое поле]
+const FIELDS = [
+  ["min", "Min. reps", "2", true],
+  ["max", "Max. reps", "14", true],
+  ["length", "Rounds count", "13", true],
+  ["total", "Total reps(opt.)", "", true],
+  ["exercise", "Excersize", "", false],
+];
+
+// ---------- утилиты ----------
+const $ = (id) => document.getElementById(id);
+const randInt = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
+const pad = (n) => String(n).padStart(2, "0");
+const sum = (arr) => arr.reduce((a, b) => a + b, 0);
+
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = randInt(0, i);
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+}
+
+/** Список из `length` случайных целых в [min, max]; если задан total — сумма равна total. */
+function randomList(min, max, length, total = null) {
+  if (length <= 0) throw new Error("Rounds count must be positive");
+  if (min > max) throw new Error("Min. reps must be lower than Max. reps");
+
+  if (total === null) {
+    return Array.from({ length }, () => randInt(min, max));
+  }
+  if (!(length * min <= total && total <= length * max)) {
+    throw new Error(`Imposible: Total must be in range [${length * min}, ${length * max}]`);
+  }
+
+  const result = [];
+  let remaining = total;
+  for (let i = 0; i < length; i++) {
+    const left = length - i - 1; // сколько элементов ещё предстоит заполнить
+    const low = Math.max(min, remaining - left * max);
+    const high = Math.min(max, remaining - left * min);
+    const value = randInt(low, high);
+    result.push(value);
+    remaining -= value;
+  }
+  shuffle(result);
+  return result;
+}
+
+function formatTime(ms) {
+  const seconds = Math.floor(ms / 1000);
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return h ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+}
+
+const isInt = (text) => /^-?\d+$/.test(text.trim());
+
+// ---------- состояние ----------
+let count = 1;
+let lists = [];
+let positions = []; // сколько элементов уже выведено из каждого списка
+let maxRounds = 0;
+let roundIndex = 0;
+let startTime = 0;
+let roundStart = 0;
+let timerJob = null;
+
+// ---------- построение интерфейса ----------
+const groups = []; // { el, inputs: { key: input } }
+
+function buildRadios() {
+  const box = $("radios");
+  for (let n = 1; n <= MAX_EXERCISES; n++) {
+    const label = document.createElement("label");
+    label.className = "radio";
+    label.innerHTML = `<input type="radio" name="count" value="${n}"${n === 1 ? " checked" : ""}> ${n}`;
+    label.querySelector("input").addEventListener("change", () => setCount(n));
+    box.appendChild(label);
+  }
+}
+
+function buildGroups() {
+  for (let i = 0; i < MAX_EXERCISES; i++) {
+    const el = document.createElement("div");
+    el.className = "group";
+    el.innerHTML = `<h2>Excersize ${i + 1}</h2>`;
+    const inputs = {};
+
+    for (const [key, title, def, numeric] of FIELDS) {
+      const label = document.createElement("label");
+      label.textContent = title;
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = def;
+      input.autocomplete = "off";
+      if (numeric) {
+        input.inputMode = "numeric";
+        // допустимый ввод для числовых полей: только цифры и минус
+        input.addEventListener("input", () => {
+          const cleaned = input.value.replace(/[^\d-]/g, "");
+          if (cleaned !== input.value) input.value = cleaned;
+        });
+      }
+//      input.addEventListener("input", saveParams);
+      label.appendChild(input);
+      el.appendChild(label);
+      inputs[key] = input;
+    }
+    $("groups").appendChild(el);
+    groups.push({ el, inputs });
+  }
+}
+
+function clearOutput() {
+  for (const id of ["result", "counter", "shown", "round", "sums"]) $(id).textContent = "";
+}
+
+function setCount(n) {
+  count = n;
+  groups.forEach((g, i) => { g.el.hidden = i >= n; });
+  // сгенерированные списки относились к прежнему количеству упражнений
+  lists = [];
+  clearOutput();
+//  saveParams();
+}
+
+// ---------- сохранение и загрузка параметров (localStorage вместо params.json) ----------
+function loadParams() {
+
+  let data;
+  try {
+    data = JSON.parse(localStorage.getItem(STORAGE_KEY));
+  } catch (e) {
+	setCount(1);
+    return; // нет данных или они повреждены: остаются значения по умолчанию
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) return;
+
+  const groupsData = Array.isArray(data.groups) ? data.groups : [data];
+  const sharedLength = data.length; // формат прежней версии: одна длина на все
+
+  groups.forEach((g, i) => {
+    const saved = groupsData[i];
+    if (!saved || typeof saved !== "object") return;
+    for (const [key, input] of Object.entries(g.inputs)) {
+      let value = saved[key];
+      if ((value === undefined || value === null) && key === "length") value = sharedLength;
+      if (typeof value === "string") input.value = value;
+    }
+  });
+
+  const saved = data.count;
+  if (Number.isInteger(saved) && saved >= 1 && saved <= MAX_EXERCISES) {
+    document.querySelector(`input[name=count][value="${saved}"]`).checked = true;
+    setCount(saved);
+  }
+}
+
+function saveParams() {
+
+  const data = {
+    count,
+    groups: groups.map((g) =>
+      Object.fromEntries(Object.entries(g.inputs).map(([k, input]) => [k, input.value]))
+    ),
+  };
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (e) {
+    /* не удалось записать: не мешаем работе */
+  }
+}
+
+// ---------- переключение кнопок ----------
+function showIdleButtons() {
+  $("next").hidden = true;
+  $("stop").hidden = true;
+  $("start").hidden = false;
+}
+
+function showWorkoutButtons() {
+  $("start").hidden = true;
+  $("next").hidden = false;
+  $("stop").hidden = false;
+}
+
+function setSettingsLocked(locked) {
+  $("generate").disabled = locked;
+  document.querySelectorAll("input[name=count]").forEach((r) => { r.disabled = locked; });
+}
+
+// ---------- генерация ----------
+function generate() {
+  const newLists = [];
+  for (let k = 0; k < count; k++) {
+    const inputs = groups[k].inputs;
+    const prefix = count > 1 ? `Excersize ${k + 1}: ` : "";
+    const totalText = inputs.total.value.trim();
+
+    if (![inputs.min, inputs.max, inputs.length].every((i) => isInt(i.value)) ||
+        (totalText && !isInt(totalText))) {
+      $("result").textContent = `${prefix}Ошибка: все поля должны содержать целые числа`;
+      return;
+    }
+
+    try {
+      newLists.push(randomList(
+        parseInt(inputs.min.value, 10),
+        parseInt(inputs.max.value, 10),
+        parseInt(inputs.length.value, 10),
+        totalText ? parseInt(totalText, 10) : null
+      ));
+    } catch (e) {
+      $("result").textContent = `${prefix}Ошибка: ${e.message}`;
+      return;
+    }
+  }
+
+  lists = newLists;
+  // списки не показываем, только очищаем прошлую ошибку и надписи тренировки
+  clearOutput();
+}
+
+// ---------- тренировка ----------
+const exerciseName = (k) => groups[k].inputs.exercise.value.trim() || `№${k + 1}`;
+
+function sumsText() {
+  const sums = lists.map((lst, k) => sum(lst.slice(0, positions[k])));
+  if (sums.length === 1) return `Sum reps: ${sums[0]}`;
+  return "Sum reps: " + sums.map((s, k) => `${exerciseName(k)}-${s}`).join(", ");
+}
+
+function shownText() {
+  // сумма всех значений, выведенных к этому моменту, по всем спискам вместе
+  const total = lists.reduce((acc, lst, k) => acc + sum(lst.slice(0, positions[k])), 0);
+  return `Total reps (all excersizes): ${total}`;
+}
+
+function updateTimer() {
+  const now = performance.now();
+  $("timer").textContent = `Total time: ${formatTime(now - startTime)}`;
+  $("roundTimer").textContent = `Round time: ${formatTime(now - roundStart)}`;
+}
+
+function startWorkout() {
+  if (!lists.length) {
+    $("round").textContent = "First press «Generate workout»";
+    return;
+  }
+
+  maxRounds = lists.reduce((acc, lst) => acc + lst.length, 0); // по раунду на элемент
+  positions = lists.map(() => 0);
+  roundIndex = 0;
+  startTime = roundStart = performance.now();
+  updateTimer();
+  $("counter").textContent = `Round 0/${maxRounds}`;
+  $("shown").textContent = shownText();
+  $("round").textContent = "Press «Next round»";
+  $("sums").textContent = sumsText();
+  $("next").disabled = false;
+  setSettingsLocked(true); // менять настройки во время тренировки нельзя
+  showWorkoutButtons();
+
+  clearInterval(timerJob);
+  timerJob = setInterval(updateTimer, 200);
+}
+
+function nextRound() {
+  if (roundIndex >= maxRounds) return;
+
+  // выбираем случайный список, в котором ещё остались невыведенные значения
+  const candidates = lists.map((_, k) => k).filter((k) => positions[k] < lists[k].length);
+  const k = candidates[randInt(0, candidates.length - 1)];
+
+  const value = lists[k][positions[k]];
+  positions[k] += 1;
+  roundIndex += 1;
+  roundStart = performance.now(); // таймер раунда начинается заново
+  updateTimer();
+
+  const exercise = groups[k].inputs.exercise.value.trim();
+  $("round").textContent = `${value} ${exercise}`.trim();
+  $("counter").textContent = `Round ${roundIndex}/${maxRounds}`;
+  $("shown").textContent = shownText();
+  $("sums").textContent = sumsText();
+
+  if (roundIndex >= maxRounds) $("next").disabled = true; // раунды закончились
+}
+
+function stopWorkout() {
+  clearInterval(timerJob);
+  timerJob = null;
+  updateTimer(); // зафиксировать итоговое время
+  if (lists.length && roundIndex >= maxRounds) $("round").textContent = "Workout complete!";
+  setSettingsLocked(false);
+  showIdleButtons();
+}
+
+// ---------- запуск ----------
+buildRadios();
+buildGroups();
+//setCount(1);
+loadParams();
+
+$("generate").addEventListener("click", generate);
+$("start").addEventListener("click", startWorkout);
+$("next").addEventListener("click", nextRound);
+$("stop").addEventListener("click", stopWorkout);
+window.addEventListener("pagehide", saveParams);
+</script>
+</body>
+</html>
